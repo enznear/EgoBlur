@@ -9,6 +9,7 @@ import os
 from functools import lru_cache
 from typing import List
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 def print_progress(iteration: int, total: int, prefix: str = "", length: int = 30) -> None:
@@ -124,6 +125,14 @@ def parse_args():
         ),
     )
 
+    parser.add_argument(
+        "--num_threads",
+        required=False,
+        type=int,
+        default=1,
+        help="Number of threads to use for video processing",
+    )
+
     return parser.parse_args()
 
 
@@ -170,6 +179,13 @@ def validate_inputs(args: argparse.Namespace) -> argparse.Namespace:
             raise ValueError(
                 f"Invalid output_video_fps {args.output_video_fps}, should be a positive integer"
             )
+
+    if not 1 <= args.num_threads or not (
+        isinstance(args.num_threads, int) and args.num_threads % 1 == 0
+    ):
+        raise ValueError(
+            f"Invalid num_threads {args.num_threads}, should be a positive integer"
+        )
 
     # input/output paths checks
     if args.face_model_path is None and args.lp_model_path is None:
@@ -415,6 +431,43 @@ def visualize_image(
     write_image(image, output_image_path)
 
 
+def _process_frame(
+    frame: np.ndarray,
+    face_detector: torch.jit._script.RecursiveScriptModule,
+    lp_detector: torch.jit._script.RecursiveScriptModule,
+    face_model_score_threshold: float,
+    lp_model_score_threshold: float,
+    nms_iou_threshold: float,
+    scale_factor_detections: float,
+) -> np.ndarray:
+    if len(frame.shape) == 2:
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+    image = frame.copy()
+    bgr_image = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+    image_tensor = get_image_tensor(bgr_image)
+    image_tensor_copy = image_tensor.clone()
+    detections = []
+    if face_detector is not None:
+        detections.extend(
+            get_detections(
+                face_detector,
+                image_tensor,
+                face_model_score_threshold,
+                nms_iou_threshold,
+            )
+        )
+    if lp_detector is not None:
+        detections.extend(
+            get_detections(
+                lp_detector,
+                image_tensor_copy,
+                lp_model_score_threshold,
+                nms_iou_threshold,
+            )
+        )
+    return visualize(image, detections, scale_factor_detections)
+
+
 def visualize_video(
     input_video_path: str,
     face_detector: torch.jit._script.RecursiveScriptModule,
@@ -425,7 +478,8 @@ def visualize_video(
     output_video_path: str,
     scale_factor_detections: float,
     output_video_fps: int,
-): 
+    num_threads: int = 1,
+):
     """
     parameter input_video_path: absolute path to the input video
     parameter face_detector: face detector model to perform face detections
@@ -436,6 +490,7 @@ def visualize_video(
     parameter output_video_path: absolute path where the visualized video will be saved
     parameter scale_factor_detections: scale detections by the given factor to allow blurring more area
     parameter output_video_fps: fps of the visualized video
+    parameter num_threads: number of threads used to process frames
 
     Perform detections on the input video and save the output video at the given path.
     """
@@ -451,42 +506,39 @@ def visualize_video(
     video_duration = video_reader_clip.duration
 
     start_time = time.time()
-    for idx, frame in enumerate(video_reader_clip.iter_frames()):
-        print_progress(idx + 1, total_frames, prefix="Processing")
-        if len(frame.shape) == 2:
-            frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
-        image = frame.copy()
-        bgr_image = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        image_tensor = get_image_tensor(bgr_image)
-        image_tensor_copy = image_tensor.clone()
-        detections = []
-        # get face detections
-        if face_detector is not None:
-            detections.extend(
-                get_detections(
+    if num_threads <= 1:
+        for idx, frame in enumerate(video_reader_clip.iter_frames()):
+            print_progress(idx + 1, total_frames, prefix="Processing")
+            visualized_images.append(
+                _process_frame(
+                    frame,
                     face_detector,
-                    image_tensor,
-                    face_model_score_threshold,
-                    nms_iou_threshold,
-                )
-            )
-        # get license plate detections
-        if lp_detector is not None:
-            detections.extend(
-                get_detections(
                     lp_detector,
-                    image_tensor_copy,
+                    face_model_score_threshold,
                     lp_model_score_threshold,
                     nms_iou_threshold,
+                    scale_factor_detections,
                 )
             )
-        visualized_images.append(
-            visualize(
-                image,
-                detections,
-                scale_factor_detections,
-            )
-        )
+    else:
+        frames = list(video_reader_clip.iter_frames())
+        with ThreadPoolExecutor(max_workers=num_threads) as executor:
+            futures = [
+                executor.submit(
+                    _process_frame,
+                    frame,
+                    face_detector,
+                    lp_detector,
+                    face_model_score_threshold,
+                    lp_model_score_threshold,
+                    nms_iou_threshold,
+                    scale_factor_detections,
+                )
+                for frame in frames
+            ]
+            for idx, f in enumerate(futures):
+                print_progress(idx + 1, total_frames, prefix="Processing")
+                visualized_images.append(f.result())
 
     video_reader_clip.close()
     elapsed_time = time.time() - start_time
@@ -544,4 +596,5 @@ if __name__ == "__main__":
             args.output_video_path,
             args.scale_factor_detections,
             args.output_video_fps,
+            args.num_threads,
         )
