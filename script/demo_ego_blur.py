@@ -107,7 +107,11 @@ def parse_args():
         required=False,
         type=str,
         default=None,
-        help="Absolute path where we want to store the visualized video",
+        help=(
+            "Absolute path where we want to store the visualized video. If not "
+            "provided, it will be created under the output folder using the "
+            "input video name."
+        ),
     )
 
     parser.add_argument(
@@ -178,10 +182,13 @@ def validate_inputs(args: argparse.Namespace) -> argparse.Namespace:
         raise ValueError(
             "Please provide output_image_path for the visualized image to save."
         )
-    if args.input_video_path is not None and args.output_video_path is None:
-        raise ValueError(
-            "Please provide output_video_path for the visualized video to save."
-        )
+    if args.input_video_path is not None:
+        if args.output_video_path is None:
+            base_name, ext = os.path.splitext(os.path.basename(args.input_video_path))
+            output_dir = os.path.join(os.getcwd(), "output")
+            args.output_video_path = os.path.join(output_dir, base_name + "_output" + ext)
+        if not os.path.exists(os.path.dirname(args.output_video_path)):
+            create_output_directory(args.output_video_path)
     if args.input_image_path is not None and not os.path.exists(args.input_image_path):
         raise ValueError(f"{args.input_image_path} does not exist.")
     if args.input_video_path is not None and not os.path.exists(args.input_video_path):
@@ -194,10 +201,6 @@ def validate_inputs(args: argparse.Namespace) -> argparse.Namespace:
         os.path.dirname(args.output_image_path)
     ):
         create_output_directory(args.output_image_path)
-    if args.output_video_path is not None and not os.path.exists(
-        os.path.dirname(args.output_video_path)
-    ):
-        create_output_directory(args.output_video_path)
 
     # check we have write permissions on output paths
     if args.output_image_path is not None and not os.access(
@@ -445,6 +448,8 @@ def visualize_video(
     )
 
     total_frames = int(video_reader_clip.fps * video_reader_clip.duration)
+    video_duration = video_reader_clip.duration
+
     start_time = time.time()
     for idx, frame in enumerate(video_reader_clip.iter_frames()):
         print_progress(idx + 1, total_frames, prefix="Processing")
@@ -485,12 +490,17 @@ def visualize_video(
 
     video_reader_clip.close()
     elapsed_time = time.time() - start_time
+    ratio = elapsed_time / video_duration if video_duration else 0
 
     if visualized_images:
         video_writer_clip = ImageSequenceClip(visualized_images, fps=fps)
         video_writer_clip.write_videofile(output_video_path)
         video_writer_clip.close()
-    print(f"Video processing completed in {elapsed_time:.2f} seconds.")
+
+    print(
+        f"Video processing completed in {elapsed_time:.2f} seconds. "
+        f"({ratio:.2f}x realtime)"
+    )
 
 
 if __name__ == "__main__":
