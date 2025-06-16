@@ -57,6 +57,8 @@ A brief description of CLI args:
 
 `--output_video_fps` use this argument to provide FPS for the output video. The values must be positive integers. If not provided, the FPS from the input video is used.
 
+When processing a video, the script shows a progress bar in the console and reports the total processing time once complete.
+
 
 
 ### CLI command example
