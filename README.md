@@ -57,8 +57,8 @@ A brief description of CLI args:
 
 `--output_video_fps` use this argument to provide FPS for the output video. The values must be positive integers. If not provided, the FPS from the input video is used.
 
-When processing a video, the script shows a progress bar in the console and reports the total processing time and how it compares to the video length.
 
+When processing a video, the script shows a progress bar in the console and reports the total processing time and how it compares to the video length.
 
 
 ### CLI command example
@@ -96,6 +96,7 @@ python script/demo_ego_blur.py --lp_model_path /home/${USER}/ego_blur_assets/ego
 #### demo command for face blurring and license plate blurring on an input image and video
 ```
 python script/demo_ego_blur.py --face_model_path /home/${USER}/ego_blur_assets/ego_blur_face.jit --lp_model_path /home/${USER}/ego_blur_assets/ego_blur_lp.jit --input_image_path /home/${USER}/ego_blur_assets/test_image.jpg --output_image_path /home/${USER}/ego_blur_assets/test_image_output.jpg  --input_video_path /home/${USER}/ego_blur_assets/test_video.mp4 --face_model_score_threshold 0.9 --lp_model_score_threshold 0.9 --nms_iou_threshold 0.3 --scale_factor_detections 1 --output_video_fps 20  # output_video_path is optional
+
 ```
 
 ## License

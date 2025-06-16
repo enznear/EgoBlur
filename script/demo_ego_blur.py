@@ -446,8 +446,10 @@ def visualize_video(
         if output_video_fps is not None
         else int(round(video_reader_clip.fps))
     )
+
     total_frames = int(video_reader_clip.fps * video_reader_clip.duration)
     video_duration = video_reader_clip.duration
+
     start_time = time.time()
     for idx, frame in enumerate(video_reader_clip.iter_frames()):
         print_progress(idx + 1, total_frames, prefix="Processing")
@@ -494,6 +496,7 @@ def visualize_video(
         video_writer_clip = ImageSequenceClip(visualized_images, fps=fps)
         video_writer_clip.write_videofile(output_video_path)
         video_writer_clip.close()
+
     print(
         f"Video processing completed in {elapsed_time:.2f} seconds. "
         f"({ratio:.2f}x realtime)"
