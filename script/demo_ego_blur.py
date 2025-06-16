@@ -12,12 +12,19 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 
-def print_progress(iteration: int, total: int, prefix: str = "", length: int = 30) -> None:
-    """Simple progress bar."""
+def print_progress(
+    iteration: int,
+    total: int,
+    prefix: str = "",
+    length: int = 30,
+    ratio: float | None = None,
+) -> None:
+    """Simple progress bar with optional realtime ratio."""
     percent = 100 * (iteration / float(total))
     filled_length = int(length * iteration // total)
     bar = "█" * filled_length + "-" * (length - filled_length)
-    print(f"\r{prefix} |{bar}| {percent:.1f}%", end="")
+    ratio_text = f" ({ratio:.2f}x)" if ratio is not None else ""
+    print(f"\r{prefix} |{bar}| {percent:.1f}%{ratio_text}", end="")
     if iteration >= total:
         print()
 
@@ -532,13 +539,30 @@ def visualize_video(
                 result = futures.pop(0).result()
                 video_writer.write(cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
                 processed += 1
-                print_progress(processed, total_frames, prefix="Processing")
+                elapsed = time.time() - start_time
+                video_time = processed / fps if fps else 0
+                ratio_now = elapsed / video_time if video_time else 0
+                print_progress(
+                    processed,
+                    total_frames,
+                    prefix="Processing",
+                    ratio=ratio_now,
+                )
 
         for future in futures:
             result = future.result()
             video_writer.write(cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
             processed += 1
-            print_progress(processed, total_frames, prefix="Processing")
+            elapsed = time.time() - start_time
+            video_time = processed / fps if fps else 0
+            ratio_now = elapsed / video_time if video_time else 0
+            print_progress(
+                processed,
+                total_frames,
+                prefix="Processing",
+                ratio=ratio_now,
+            )
+
 
     video_reader_clip.close()
     video_writer.release()
