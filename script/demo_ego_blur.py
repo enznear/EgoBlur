@@ -8,6 +8,17 @@ import argparse
 import os
 from functools import lru_cache
 from typing import List
+import time
+
+
+def print_progress(iteration: int, total: int, prefix: str = "", length: int = 30) -> None:
+    """Simple progress bar."""
+    percent = 100 * (iteration / float(total))
+    filled_length = int(length * iteration // total)
+    bar = "█" * filled_length + "-" * (length - filled_length)
+    print(f"\r{prefix} |{bar}| {percent:.1f}%", end="")
+    if iteration >= total:
+        print()
 
 import cv2
 import numpy as np
@@ -96,15 +107,21 @@ def parse_args():
         required=False,
         type=str,
         default=None,
-        help="Absolute path where we want to store the visualized video",
+        help=(
+            "Absolute path where we want to store the visualized video. If not "
+            "provided, it will be created under the output folder using the "
+            "input video name."
+        ),
     )
 
     parser.add_argument(
         "--output_video_fps",
         required=False,
         type=int,
-        default=30,
-        help="FPS for the output video",
+        default=None,
+        help=(
+            "FPS for the output video. If not provided, the input video's FPS is used"
+        ),
     )
 
     return parser.parse_args()
@@ -145,12 +162,14 @@ def validate_inputs(args: argparse.Namespace) -> argparse.Namespace:
         raise ValueError(
             f"Invalid scale_factor_detections {args.scale_factor_detections}"
         )
-    if not 1 <= args.output_video_fps or not (
-        isinstance(args.output_video_fps, int) and args.output_video_fps % 1 == 0
-    ):
-        raise ValueError(
-            f"Invalid output_video_fps {args.output_video_fps}, should be a positive integer"
-        )
+    if args.output_video_fps is not None:
+        if not 1 <= args.output_video_fps or not (
+            isinstance(args.output_video_fps, int)
+            and args.output_video_fps % 1 == 0
+        ):
+            raise ValueError(
+                f"Invalid output_video_fps {args.output_video_fps}, should be a positive integer"
+            )
 
     # input/output paths checks
     if args.face_model_path is None and args.lp_model_path is None:
@@ -163,10 +182,13 @@ def validate_inputs(args: argparse.Namespace) -> argparse.Namespace:
         raise ValueError(
             "Please provide output_image_path for the visualized image to save."
         )
-    if args.input_video_path is not None and args.output_video_path is None:
-        raise ValueError(
-            "Please provide output_video_path for the visualized video to save."
-        )
+    if args.input_video_path is not None:
+        if args.output_video_path is None:
+            base_name, ext = os.path.splitext(os.path.basename(args.input_video_path))
+            output_dir = os.path.join(os.getcwd(), "output")
+            args.output_video_path = os.path.join(output_dir, base_name + "_output" + ext)
+        if not os.path.exists(os.path.dirname(args.output_video_path)):
+            create_output_directory(args.output_video_path)
     if args.input_image_path is not None and not os.path.exists(args.input_image_path):
         raise ValueError(f"{args.input_image_path} does not exist.")
     if args.input_video_path is not None and not os.path.exists(args.input_video_path):
@@ -179,10 +201,6 @@ def validate_inputs(args: argparse.Namespace) -> argparse.Namespace:
         os.path.dirname(args.output_image_path)
     ):
         create_output_directory(args.output_image_path)
-    if args.output_video_path is not None and not os.path.exists(
-        os.path.dirname(args.output_video_path)
-    ):
-        create_output_directory(args.output_video_path)
 
     # check we have write permissions on output paths
     if args.output_image_path is not None and not os.access(
@@ -407,7 +425,7 @@ def visualize_video(
     output_video_path: str,
     scale_factor_detections: float,
     output_video_fps: int,
-):
+): 
     """
     parameter input_video_path: absolute path to the input video
     parameter face_detector: face detector model to perform face detections
@@ -423,7 +441,16 @@ def visualize_video(
     """
     visualized_images = []
     video_reader_clip = VideoFileClip(input_video_path)
-    for frame in video_reader_clip.iter_frames():
+    fps = (
+        output_video_fps
+        if output_video_fps is not None
+        else int(round(video_reader_clip.fps))
+    )
+    total_frames = int(video_reader_clip.fps * video_reader_clip.duration)
+    video_duration = video_reader_clip.duration
+    start_time = time.time()
+    for idx, frame in enumerate(video_reader_clip.iter_frames()):
+        print_progress(idx + 1, total_frames, prefix="Processing")
         if len(frame.shape) == 2:
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
         image = frame.copy()
@@ -460,11 +487,17 @@ def visualize_video(
         )
 
     video_reader_clip.close()
+    elapsed_time = time.time() - start_time
+    ratio = elapsed_time / video_duration if video_duration else 0
 
     if visualized_images:
-        video_writer_clip = ImageSequenceClip(visualized_images, fps=output_video_fps)
+        video_writer_clip = ImageSequenceClip(visualized_images, fps=fps)
         video_writer_clip.write_videofile(output_video_path)
         video_writer_clip.close()
+    print(
+        f"Video processing completed in {elapsed_time:.2f} seconds. "
+        f"({ratio:.2f}x realtime)"
+    )
 
 
 if __name__ == "__main__":
