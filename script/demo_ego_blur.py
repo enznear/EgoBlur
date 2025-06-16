@@ -563,6 +563,7 @@ def visualize_video(
                 ratio=ratio_now,
             )
 
+
     video_reader_clip.close()
     video_writer.release()
     elapsed_time = time.time() - start_time
