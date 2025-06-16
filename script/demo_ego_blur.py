@@ -443,6 +443,7 @@ def visualize_video(
         if output_video_fps is not None
         else int(round(video_reader_clip.fps))
     )
+
     total_frames = int(video_reader_clip.fps * video_reader_clip.duration)
     start_time = time.time()
     for idx, frame in enumerate(video_reader_clip.iter_frames()):
