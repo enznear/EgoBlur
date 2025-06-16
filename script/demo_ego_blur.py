@@ -494,7 +494,6 @@ def visualize_video(
 
     Perform detections on the input video and save the output video at the given path.
     """
-    visualized_images = []
     video_reader_clip = VideoFileClip(input_video_path)
     fps = (
         output_video_fps
@@ -505,25 +504,18 @@ def visualize_video(
     total_frames = int(video_reader_clip.fps * video_reader_clip.duration)
     video_duration = video_reader_clip.duration
 
+    width, height = video_reader_clip.size
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    video_writer = cv2.VideoWriter(
+        output_video_path, fourcc, fps, (width, height)
+    )
+
     start_time = time.time()
-    if num_threads <= 1:
-        for idx, frame in enumerate(video_reader_clip.iter_frames()):
-            print_progress(idx + 1, total_frames, prefix="Processing")
-            visualized_images.append(
-                _process_frame(
-                    frame,
-                    face_detector,
-                    lp_detector,
-                    face_model_score_threshold,
-                    lp_model_score_threshold,
-                    nms_iou_threshold,
-                    scale_factor_detections,
-                )
-            )
-    else:
-        frames = list(video_reader_clip.iter_frames())
-        with ThreadPoolExecutor(max_workers=num_threads) as executor:
-            futures = [
+    processed = 0
+    with ThreadPoolExecutor(max_workers=max(num_threads, 1)) as executor:
+        futures = []
+        for frame in video_reader_clip.iter_frames():
+            futures.append(
                 executor.submit(
                     _process_frame,
                     frame,
@@ -534,20 +526,24 @@ def visualize_video(
                     nms_iou_threshold,
                     scale_factor_detections,
                 )
-                for frame in frames
-            ]
-            for idx, f in enumerate(futures):
-                print_progress(idx + 1, total_frames, prefix="Processing")
-                visualized_images.append(f.result())
+            )
+
+            if len(futures) >= num_threads:
+                result = futures.pop(0).result()
+                video_writer.write(cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
+                processed += 1
+                print_progress(processed, total_frames, prefix="Processing")
+
+        for future in futures:
+            result = future.result()
+            video_writer.write(cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
+            processed += 1
+            print_progress(processed, total_frames, prefix="Processing")
 
     video_reader_clip.close()
+    video_writer.release()
     elapsed_time = time.time() - start_time
     ratio = elapsed_time / video_duration if video_duration else 0
-
-    if visualized_images:
-        video_writer_clip = ImageSequenceClip(visualized_images, fps=fps)
-        video_writer_clip.write_videofile(output_video_path)
-        video_writer_clip.close()
 
     print(
         f"Video processing completed in {elapsed_time:.2f} seconds. "
