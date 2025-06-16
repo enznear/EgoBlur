@@ -103,8 +103,10 @@ def parse_args():
         "--output_video_fps",
         required=False,
         type=int,
-        default=30,
-        help="FPS for the output video",
+        default=None,
+        help=(
+            "FPS for the output video. If not provided, the input video's FPS is used"
+        ),
     )
 
     return parser.parse_args()
@@ -145,12 +147,14 @@ def validate_inputs(args: argparse.Namespace) -> argparse.Namespace:
         raise ValueError(
             f"Invalid scale_factor_detections {args.scale_factor_detections}"
         )
-    if not 1 <= args.output_video_fps or not (
-        isinstance(args.output_video_fps, int) and args.output_video_fps % 1 == 0
-    ):
-        raise ValueError(
-            f"Invalid output_video_fps {args.output_video_fps}, should be a positive integer"
-        )
+    if args.output_video_fps is not None:
+        if not 1 <= args.output_video_fps or not (
+            isinstance(args.output_video_fps, int)
+            and args.output_video_fps % 1 == 0
+        ):
+            raise ValueError(
+                f"Invalid output_video_fps {args.output_video_fps}, should be a positive integer"
+            )
 
     # input/output paths checks
     if args.face_model_path is None and args.lp_model_path is None:
@@ -423,6 +427,11 @@ def visualize_video(
     """
     visualized_images = []
     video_reader_clip = VideoFileClip(input_video_path)
+    fps = (
+        output_video_fps
+        if output_video_fps is not None
+        else int(round(video_reader_clip.fps))
+    )
     for frame in video_reader_clip.iter_frames():
         if len(frame.shape) == 2:
             frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
@@ -462,7 +471,7 @@ def visualize_video(
     video_reader_clip.close()
 
     if visualized_images:
-        video_writer_clip = ImageSequenceClip(visualized_images, fps=output_video_fps)
+        video_writer_clip = ImageSequenceClip(visualized_images, fps=fps)
         video_writer_clip.write_videofile(output_video_path)
         video_writer_clip.close()
 
