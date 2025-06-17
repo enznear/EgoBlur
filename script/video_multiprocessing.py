@@ -21,7 +21,9 @@ import torch
 from script.demo_ego_blur import _process_frame, get_device
 
 
+
 # Global detectors that are initialized once and shared across workers
+
 FACE_DETECTOR = None
 LP_DETECTOR = None
 
@@ -51,6 +53,7 @@ def init_worker(fd, lp):
         )
     else:
         LP_DETECTOR = lp
+
 
 
 def print_progress(
@@ -84,6 +87,7 @@ def _process_segment(
     progress_queue=None,
     progress_step: int = 1,
 ) -> str:
+
     """Process a segment of the video.
 
     Parameters
@@ -109,12 +113,12 @@ def _process_segment(
     progress_step: int
         Number of frames processed before sending a progress update.
 
+
     Returns
     -------
     str
         Path to the processed segment file.
     """
-
 
     cap = cv2.VideoCapture(input_video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -129,6 +133,7 @@ def _process_segment(
     lp_detector = LP_DETECTOR
 
     count = 0
+
     for _ in range(start_frame, end_frame):
         ret, frame_bgr = cap.read()
         if not ret:
@@ -184,6 +189,7 @@ def process_video_multiprocessing(
         Path to the face detection model. Loaded once and shared across workers.
     lp_model_path: str | None
         Path to the license plate detection model. Loaded once and shared across workers.
+
     face_model_score_threshold: float
         Threshold for filtering face detections.
     lp_model_score_threshold: float
@@ -218,6 +224,7 @@ def process_video_multiprocessing(
             lp_detector.share_memory()
 
         init_args = (face_detector, lp_detector)
+
 
     cap = cv2.VideoCapture(input_video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -258,6 +265,7 @@ def process_video_multiprocessing(
 
         ctx = mp.get_context(start_method)
         with ctx.Pool(processes=num_processes, initializer=init_worker, initargs=init_args) as pool:
+
             results = [
                 pool.apply_async(
                     _process_segment,
@@ -295,7 +303,6 @@ def process_video_multiprocessing(
         f"Video processing completed in {elapsed_time:.2f} seconds. "
         f"({ratio:.2f}x realtime)"
     )
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
