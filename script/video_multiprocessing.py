@@ -33,6 +33,7 @@ def init_worker(fd, lp):
     LP_DETECTOR = lp
 
 
+
 def print_progress(
     iteration: int,
     total: int,
@@ -64,6 +65,7 @@ def _process_segment(
     progress_queue=None,
     progress_step: int = 1,
 ) -> str:
+
     """Process a segment of the video.
 
     Parameters
@@ -89,12 +91,12 @@ def _process_segment(
     progress_step: int
         Number of frames processed before sending a progress update.
 
+
     Returns
     -------
     str
         Path to the processed segment file.
     """
-
 
     cap = cv2.VideoCapture(input_video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -109,6 +111,7 @@ def _process_segment(
     lp_detector = LP_DETECTOR
 
     count = 0
+
     for _ in range(start_frame, end_frame):
         ret, frame_bgr = cap.read()
         if not ret:
@@ -130,6 +133,7 @@ def _process_segment(
 
     if progress_queue is not None and count % progress_step != 0:
         progress_queue.put(count % progress_step)
+
 
     writer.release()
     cap.release()
@@ -164,6 +168,7 @@ def process_video_multiprocessing(
         Path to the face detection model. Loaded once and shared across workers.
     lp_model_path: str | None
         Path to the license plate detection model. Loaded once and shared across workers.
+
     face_model_score_threshold: float
         Threshold for filtering face detections.
     lp_model_score_threshold: float
@@ -192,6 +197,7 @@ def process_video_multiprocessing(
         lp_detector.eval()
         lp_detector.share_memory()
 
+
     cap = cv2.VideoCapture(input_video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -199,6 +205,7 @@ def process_video_multiprocessing(
     cap.release()
 
     progress_step = max(1, total_frames // 100)
+
 
     frames_per_chunk = math.ceil(total_frames / max(1, num_processes))
 
@@ -221,6 +228,7 @@ def process_video_multiprocessing(
                 scale_factor_detections,
             )
         )
+
         start = end
         idx += 1
 
@@ -228,19 +236,20 @@ def process_video_multiprocessing(
         progress_queue = manager.Queue()
         start_time = time.time()
         processed = 0
-
         ctx = mp.get_context("fork")
         with ctx.Pool(processes=num_processes, initializer=init_worker, initargs=(face_detector, lp_detector)) as pool:
             results = [
                 pool.apply_async(
                     _process_segment,
                     args=(*seg, progress_queue, progress_step),
+
                 )
                 for seg in segments
             ]
 
             while processed < total_frames:
                 processed += progress_queue.get()
+
                 elapsed = time.time() - start_time
                 video_time = processed / fps if fps else 0
                 ratio_now = elapsed / video_time if video_time else 0
@@ -268,7 +277,6 @@ def process_video_multiprocessing(
         f"Video processing completed in {elapsed_time:.2f} seconds. "
         f"({ratio:.2f}x realtime)"
     )
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
