@@ -11,14 +11,28 @@ import argparse
 import math
 import time
 import os
-from multiprocessing import Pool, Manager
-
+from multiprocessing import Manager
+import torch.multiprocessing as mp
 
 import cv2
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 import torch
 
 from script.demo_ego_blur import _process_frame, get_device
+
+
+# Global detectors that are initialized once and shared across forked workers
+FACE_DETECTOR = None
+LP_DETECTOR = None
+
+
+def init_worker(fd, lp):
+    """Set global detectors for each worker."""
+    global FACE_DETECTOR, LP_DETECTOR
+    FACE_DETECTOR = fd
+    LP_DETECTOR = lp
+
+
 
 def print_progress(
     iteration: int,
@@ -44,13 +58,12 @@ def _process_segment(
     start_frame: int,
     end_frame: int,
     output_path: str,
-    face_model_path: str | None,
-    lp_model_path: str | None,
     face_model_score_threshold: float,
     lp_model_score_threshold: float,
     nms_iou_threshold: float,
     scale_factor_detections: float,
     progress_queue=None,
+    progress_step: int = 1,
 ) -> str:
 
     """Process a segment of the video.
@@ -65,10 +78,6 @@ def _process_segment(
         Last frame (exclusive) of the segment to process.
     output_path: str
         Path where the processed segment will be written.
-    face_model_path: str | None
-        Path to the face detection model.
-    lp_model_path: str | None
-        Path to the license plate detection model.
     face_model_score_threshold: float
         Threshold for filtering face detections.
     lp_model_score_threshold: float
@@ -78,7 +87,9 @@ def _process_segment(
     scale_factor_detections: float
         Scale factor for detection boxes.
     progress_queue: multiprocessing.Queue | None
-        If provided, will be used to send per-frame progress updates.
+        If provided, will be used to send progress updates.
+    progress_step: int
+        Number of frames processed before sending a progress update.
 
 
     Returns
@@ -96,21 +107,10 @@ def _process_segment(
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
 
-    if face_model_path is not None:
-        face_detector = torch.jit.load(face_model_path, map_location="cpu").to(
-            get_device()
-        )
-        face_detector.eval()
-    else:
-        face_detector = None
+    face_detector = FACE_DETECTOR
+    lp_detector = LP_DETECTOR
 
-    if lp_model_path is not None:
-        lp_detector = torch.jit.load(lp_model_path, map_location="cpu").to(
-            get_device()
-        )
-        lp_detector.eval()
-    else:
-        lp_detector = None
+    count = 0
 
     for _ in range(start_frame, end_frame):
         ret, frame_bgr = cap.read()
@@ -127,9 +127,12 @@ def _process_segment(
             scale_factor_detections,
         )
         writer.write(cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
+        count += 1
+        if progress_queue is not None and count % progress_step == 0:
+            progress_queue.put(progress_step)
 
-        if progress_queue is not None:
-            progress_queue.put(1)
+    if progress_queue is not None and count % progress_step != 0:
+        progress_queue.put(count % progress_step)
 
 
     writer.release()
@@ -148,7 +151,6 @@ def process_video_multiprocessing(
     nms_iou_threshold: float,
     scale_factor_detections: float,
     output_video_fps: int | None,
-
 ) -> None:
     """Split ``input_video_path`` into ``num_processes`` chunks and process them
     in parallel. The processed chunks are concatenated and written to
@@ -163,9 +165,10 @@ def process_video_multiprocessing(
     num_processes: int
         Number of worker processes to use.
     face_model_path: str | None
-        Path to the face detection model.
+        Path to the face detection model. Loaded once and shared across workers.
     lp_model_path: str | None
-        Path to the license plate detection model.
+        Path to the license plate detection model. Loaded once and shared across workers.
+
     face_model_score_threshold: float
         Threshold for filtering face detections.
     lp_model_score_threshold: float
@@ -178,12 +181,31 @@ def process_video_multiprocessing(
         FPS of the output video. Defaults to the input FPS if ``None``.
     """
 
+    face_detector = None
+    lp_detector = None
+    if face_model_path is not None:
+        face_detector = torch.jit.load(face_model_path, map_location="cpu").to(
+            get_device()
+        )
+        face_detector.eval()
+        face_detector.share_memory()
+
+    if lp_model_path is not None:
+        lp_detector = torch.jit.load(lp_model_path, map_location="cpu").to(
+            get_device()
+        )
+        lp_detector.eval()
+        lp_detector.share_memory()
+
+
     cap = cv2.VideoCapture(input_video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     video_duration = total_frames / fps if fps else 0
-
     cap.release()
+
+    progress_step = max(1, total_frames // 100)
+
 
     frames_per_chunk = math.ceil(total_frames / max(1, num_processes))
 
@@ -200,8 +222,6 @@ def process_video_multiprocessing(
                 start,
                 end,
                 part_path,
-                face_model_path,
-                lp_model_path,
                 face_model_score_threshold,
                 lp_model_score_threshold,
                 nms_iou_threshold,
@@ -216,19 +236,20 @@ def process_video_multiprocessing(
         progress_queue = manager.Queue()
         start_time = time.time()
         processed = 0
-
-        with Pool(processes=num_processes) as pool:
+        ctx = mp.get_context("fork")
+        with ctx.Pool(processes=num_processes, initializer=init_worker, initargs=(face_detector, lp_detector)) as pool:
             results = [
                 pool.apply_async(
                     _process_segment,
-                    args=(*seg, progress_queue),
+                    args=(*seg, progress_queue, progress_step),
+
                 )
                 for seg in segments
             ]
 
             while processed < total_frames:
-                progress_queue.get()
-                processed += 1
+                processed += progress_queue.get()
+
                 elapsed = time.time() - start_time
                 video_time = processed / fps if fps else 0
                 ratio_now = elapsed / video_time if video_time else 0
@@ -240,7 +261,6 @@ def process_video_multiprocessing(
                 )
 
             part_paths = [r.get() for r in results]
-
 
     output_fps = output_video_fps if output_video_fps is not None else fps
     clips = [VideoFileClip(p) for p in part_paths]
@@ -257,8 +277,6 @@ def process_video_multiprocessing(
         f"Video processing completed in {elapsed_time:.2f} seconds. "
         f"({ratio:.2f}x realtime)"
     )
-
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -325,7 +343,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="FPS for the output video. If not provided, the input video's FPS is used",
     )
-
     return parser.parse_args()
 
 
@@ -342,5 +359,4 @@ if __name__ == "__main__":
         args.nms_iou_threshold,
         args.scale_factor_detections,
         args.output_video_fps,
-
     )
