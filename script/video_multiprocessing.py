@@ -21,16 +21,38 @@ import torch
 from script.demo_ego_blur import _process_frame, get_device
 
 
-# Global detectors that are initialized once and shared across forked workers
+
+# Global detectors that are initialized once and shared across workers
+
 FACE_DETECTOR = None
 LP_DETECTOR = None
 
 
 def init_worker(fd, lp):
-    """Set global detectors for each worker."""
+    """Set global detectors for each worker.
+
+    ``fd`` and ``lp`` can be either loaded models (when using ``fork``)
+    or file paths (when using ``spawn``).
+    """
     global FACE_DETECTOR, LP_DETECTOR
-    FACE_DETECTOR = fd
-    LP_DETECTOR = lp
+
+    if isinstance(fd, str) or fd is None:
+        FACE_DETECTOR = (
+            torch.jit.load(fd, map_location="cpu").to(get_device()).eval()
+            if fd is not None
+            else None
+        )
+    else:
+        FACE_DETECTOR = fd
+
+    if isinstance(lp, str) or lp is None:
+        LP_DETECTOR = (
+            torch.jit.load(lp, map_location="cpu").to(get_device()).eval()
+            if lp is not None
+            else None
+        )
+    else:
+        LP_DETECTOR = lp
 
 
 
@@ -134,7 +156,6 @@ def _process_segment(
     if progress_queue is not None and count % progress_step != 0:
         progress_queue.put(count % progress_step)
 
-
     writer.release()
     cap.release()
     return output_path
@@ -181,21 +202,28 @@ def process_video_multiprocessing(
         FPS of the output video. Defaults to the input FPS if ``None``.
     """
 
+    start_method = "spawn" if torch.cuda.is_available() else "fork"
+
     face_detector = None
     lp_detector = None
-    if face_model_path is not None:
-        face_detector = torch.jit.load(face_model_path, map_location="cpu").to(
-            get_device()
-        )
-        face_detector.eval()
-        face_detector.share_memory()
+    init_args = (face_model_path, lp_model_path)
 
-    if lp_model_path is not None:
-        lp_detector = torch.jit.load(lp_model_path, map_location="cpu").to(
-            get_device()
-        )
-        lp_detector.eval()
-        lp_detector.share_memory()
+    if start_method == "fork":
+        if face_model_path is not None:
+            face_detector = torch.jit.load(face_model_path, map_location="cpu").to(
+                get_device()
+            )
+            face_detector.eval()
+            face_detector.share_memory()
+
+        if lp_model_path is not None:
+            lp_detector = torch.jit.load(lp_model_path, map_location="cpu").to(
+                get_device()
+            )
+            lp_detector.eval()
+            lp_detector.share_memory()
+
+        init_args = (face_detector, lp_detector)
 
 
     cap = cv2.VideoCapture(input_video_path)
@@ -205,7 +233,6 @@ def process_video_multiprocessing(
     cap.release()
 
     progress_step = max(1, total_frames // 100)
-
 
     frames_per_chunk = math.ceil(total_frames / max(1, num_processes))
 
@@ -228,7 +255,6 @@ def process_video_multiprocessing(
                 scale_factor_detections,
             )
         )
-
         start = end
         idx += 1
 
@@ -236,20 +262,20 @@ def process_video_multiprocessing(
         progress_queue = manager.Queue()
         start_time = time.time()
         processed = 0
-        ctx = mp.get_context("fork")
-        with ctx.Pool(processes=num_processes, initializer=init_worker, initargs=(face_detector, lp_detector)) as pool:
+
+        ctx = mp.get_context(start_method)
+        with ctx.Pool(processes=num_processes, initializer=init_worker, initargs=init_args) as pool:
+
             results = [
                 pool.apply_async(
                     _process_segment,
                     args=(*seg, progress_queue, progress_step),
-
                 )
                 for seg in segments
             ]
 
             while processed < total_frames:
                 processed += progress_queue.get()
-
                 elapsed = time.time() - start_time
                 video_time = processed / fps if fps else 0
                 ratio_now = elapsed / video_time if video_time else 0
