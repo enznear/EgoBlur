@@ -33,6 +33,7 @@ def _process_segment(
         float,
     ]
 ) -> str:
+
     """Process a segment of the video.
 
     Parameters
@@ -48,6 +49,7 @@ def _process_segment(
         lp_model_score_threshold: float
         nms_iou_threshold: float
         scale_factor_detections: float
+
 
     Returns
     -------
@@ -109,6 +111,7 @@ def _process_segment(
         )
         writer.write(cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
 
+
     writer.release()
     cap.release()
     return output_path
@@ -125,6 +128,7 @@ def process_video_multiprocessing(
     nms_iou_threshold: float,
     scale_factor_detections: float,
     output_video_fps: int | None,
+
 ) -> None:
     """Split ``input_video_path`` into ``num_processes`` chunks and process them
     in parallel. The processed chunks are concatenated and written to
@@ -152,6 +156,7 @@ def process_video_multiprocessing(
         Scale factor for detection boxes.
     output_video_fps: int | None
         FPS of the output video. Defaults to the input FPS if ``None``.
+
     """
 
     cap = cv2.VideoCapture(input_video_path)
@@ -182,11 +187,13 @@ def process_video_multiprocessing(
                 scale_factor_detections,
             )
         )
+
         start = end
         idx += 1
 
     with Pool(processes=num_processes) as pool:
         part_paths = pool.map(_process_segment, segments)
+
 
     output_fps = output_video_fps if output_video_fps is not None else fps
     clips = [VideoFileClip(p) for p in part_paths]
@@ -263,6 +270,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="FPS for the output video. If not provided, the input video's FPS is used",
     )
+
     return parser.parse_args()
 
 
@@ -279,4 +287,5 @@ if __name__ == "__main__":
         args.nms_iou_threshold,
         args.scale_factor_detections,
         args.output_video_fps,
+
     )
