@@ -13,12 +13,12 @@ import time
 import os
 from multiprocessing import Pool, Manager
 
+
 import cv2
 from moviepy.editor import VideoFileClip, concatenate_videoclips
 import torch
 
 from script.demo_ego_blur import _process_frame, get_device
-
 
 def print_progress(
     iteration: int,
@@ -52,6 +52,7 @@ def _process_segment(
     scale_factor_detections: float,
     progress_queue=None,
 ) -> str:
+
     """Process a segment of the video.
 
     Parameters
@@ -79,12 +80,12 @@ def _process_segment(
     progress_queue: multiprocessing.Queue | None
         If provided, will be used to send per-frame progress updates.
 
+
     Returns
     -------
     str
         Path to the processed segment file.
     """
-
 
     cap = cv2.VideoCapture(input_video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -126,8 +127,10 @@ def _process_segment(
             scale_factor_detections,
         )
         writer.write(cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
+
         if progress_queue is not None:
             progress_queue.put(1)
+
 
     writer.release()
     cap.release()
@@ -145,6 +148,7 @@ def process_video_multiprocessing(
     nms_iou_threshold: float,
     scale_factor_detections: float,
     output_video_fps: int | None,
+
 ) -> None:
     """Split ``input_video_path`` into ``num_processes`` chunks and process them
     in parallel. The processed chunks are concatenated and written to
@@ -178,6 +182,7 @@ def process_video_multiprocessing(
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
     video_duration = total_frames / fps if fps else 0
+
     cap.release()
 
     frames_per_chunk = math.ceil(total_frames / max(1, num_processes))
@@ -203,6 +208,7 @@ def process_video_multiprocessing(
                 scale_factor_detections,
             )
         )
+
         start = end
         idx += 1
 
@@ -235,6 +241,7 @@ def process_video_multiprocessing(
 
             part_paths = [r.get() for r in results]
 
+
     output_fps = output_video_fps if output_video_fps is not None else fps
     clips = [VideoFileClip(p) for p in part_paths]
     final_clip = concatenate_videoclips(clips)
@@ -250,6 +257,7 @@ def process_video_multiprocessing(
         f"Video processing completed in {elapsed_time:.2f} seconds. "
         f"({ratio:.2f}x realtime)"
     )
+
 
 
 def parse_args() -> argparse.Namespace:
@@ -317,6 +325,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="FPS for the output video. If not provided, the input video's FPS is used",
     )
+
     return parser.parse_args()
 
 
@@ -333,4 +342,5 @@ if __name__ == "__main__":
         args.nms_iou_threshold,
         args.scale_factor_detections,
         args.output_video_fps,
+
     )
