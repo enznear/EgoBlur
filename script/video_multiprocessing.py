@@ -9,8 +9,10 @@ in parallel using Python multiprocessing."""
 
 import argparse
 import math
+import time
 import os
-from multiprocessing import Pool
+from multiprocessing import Pool, Manager
+
 
 import cv2
 from moviepy.editor import VideoFileClip, concatenate_videoclips
@@ -18,37 +20,65 @@ import torch
 
 from script.demo_ego_blur import _process_frame, get_device
 
+def print_progress(
+    iteration: int,
+    total: int,
+    prefix: str = "",
+    length: int = 30,
+    ratio: float | None = None,
+) -> None:
+    """Simple progress bar with optional realtime ratio."""
+
+    percent = 100 * (iteration / float(total))
+    filled_length = int(length * iteration // total)
+    bar = "█" * filled_length + "-" * (length - filled_length)
+    ratio_text = f" ({ratio:.2f}x)" if ratio is not None else ""
+    print(f"\r{prefix} |{bar}| {percent:.1f}%{ratio_text}", end="")
+    if iteration >= total:
+        print()
+
+
 
 def _process_segment(
-    args: tuple[
-        str,
-        int,
-        int,
-        str,
-        str | None,
-        str | None,
-        float,
-        float,
-        float,
-        float,
-    ]
+    input_video_path: str,
+    start_frame: int,
+    end_frame: int,
+    output_path: str,
+    face_model_path: str | None,
+    lp_model_path: str | None,
+    face_model_score_threshold: float,
+    lp_model_score_threshold: float,
+    nms_iou_threshold: float,
+    scale_factor_detections: float,
+    progress_queue=None,
 ) -> str:
 
     """Process a segment of the video.
 
     Parameters
     ----------
-    args: tuple containing
-        input_video_path: str
-        start_frame: int
-        end_frame: int
-        output_path: str
-        face_model_path: str | None
-        lp_model_path: str | None
-        face_model_score_threshold: float
-        lp_model_score_threshold: float
-        nms_iou_threshold: float
-        scale_factor_detections: float
+    input_video_path: str
+        Path to the input video.
+    start_frame: int
+        First frame of the segment to process.
+    end_frame: int
+        Last frame (exclusive) of the segment to process.
+    output_path: str
+        Path where the processed segment will be written.
+    face_model_path: str | None
+        Path to the face detection model.
+    lp_model_path: str | None
+        Path to the license plate detection model.
+    face_model_score_threshold: float
+        Threshold for filtering face detections.
+    lp_model_score_threshold: float
+        Threshold for filtering license plate detections.
+    nms_iou_threshold: float
+        NMS IoU threshold to filter overlapping boxes.
+    scale_factor_detections: float
+        Scale factor for detection boxes.
+    progress_queue: multiprocessing.Queue | None
+        If provided, will be used to send per-frame progress updates.
 
 
     Returns
@@ -56,19 +86,6 @@ def _process_segment(
     str
         Path to the processed segment file.
     """
-
-    (
-        input_video_path,
-        start_frame,
-        end_frame,
-        output_path,
-        face_model_path,
-        lp_model_path,
-        face_model_score_threshold,
-        lp_model_score_threshold,
-        nms_iou_threshold,
-        scale_factor_detections,
-    ) = args
 
     cap = cv2.VideoCapture(input_video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -110,6 +127,9 @@ def _process_segment(
             scale_factor_detections,
         )
         writer.write(cv2.cvtColor(processed, cv2.COLOR_RGB2BGR))
+
+        if progress_queue is not None:
+            progress_queue.put(1)
 
 
     writer.release()
@@ -156,12 +176,13 @@ def process_video_multiprocessing(
         Scale factor for detection boxes.
     output_video_fps: int | None
         FPS of the output video. Defaults to the input FPS if ``None``.
-
     """
 
     cap = cv2.VideoCapture(input_video_path)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS)
+    video_duration = total_frames / fps if fps else 0
+
     cap.release()
 
     frames_per_chunk = math.ceil(total_frames / max(1, num_processes))
@@ -191,8 +212,34 @@ def process_video_multiprocessing(
         start = end
         idx += 1
 
-    with Pool(processes=num_processes) as pool:
-        part_paths = pool.map(_process_segment, segments)
+    with Manager() as manager:
+        progress_queue = manager.Queue()
+        start_time = time.time()
+        processed = 0
+
+        with Pool(processes=num_processes) as pool:
+            results = [
+                pool.apply_async(
+                    _process_segment,
+                    args=(*seg, progress_queue),
+                )
+                for seg in segments
+            ]
+
+            while processed < total_frames:
+                progress_queue.get()
+                processed += 1
+                elapsed = time.time() - start_time
+                video_time = processed / fps if fps else 0
+                ratio_now = elapsed / video_time if video_time else 0
+                print_progress(
+                    processed,
+                    total_frames,
+                    prefix="Processing",
+                    ratio=ratio_now,
+                )
+
+            part_paths = [r.get() for r in results]
 
 
     output_fps = output_video_fps if output_video_fps is not None else fps
@@ -203,6 +250,14 @@ def process_video_multiprocessing(
     for clip in clips:
         clip.close()
         os.remove(clip.filename)
+
+    elapsed_time = time.time() - start_time
+    ratio = elapsed_time / video_duration if video_duration else 0
+    print(
+        f"Video processing completed in {elapsed_time:.2f} seconds. "
+        f"({ratio:.2f}x realtime)"
+    )
+
 
 
 def parse_args() -> argparse.Namespace:
