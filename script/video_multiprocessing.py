@@ -291,8 +291,12 @@ def process_video_multiprocessing(
     output_fps = output_video_fps if output_video_fps is not None else fps
     clips = [VideoFileClip(p) for p in part_paths]
     final_clip = concatenate_videoclips(clips)
+    input_clip = VideoFileClip(input_video_path)
+    if input_clip.audio is not None:
+        final_clip = final_clip.set_audio(input_clip.audio)
     final_clip.write_videofile(output_video_path, fps=output_fps)
     final_clip.close()
+    input_clip.close()
     for clip in clips:
         clip.close()
         os.remove(clip.filename)
