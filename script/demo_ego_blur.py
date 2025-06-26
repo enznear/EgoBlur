@@ -566,6 +566,20 @@ def visualize_video(
 
     video_reader_clip.close()
     video_writer.release()
+    # attach original audio to the processed video
+    try:
+        audio_clip = VideoFileClip(input_video_path).audio
+        if audio_clip is not None:
+            temp_output = output_video_path + ".temp.mp4"
+            (
+                VideoFileClip(output_video_path)
+                .set_audio(audio_clip)
+                .write_videofile(temp_output, fps=fps)
+            )
+            os.replace(temp_output, output_video_path)
+            audio_clip.close()
+    except Exception as e:  # pragma: no cover - best effort audio handling
+        print(f"Failed to add audio: {e}")
     elapsed_time = time.time() - start_time
     ratio = elapsed_time / video_duration if video_duration else 0
 
