@@ -28,13 +28,19 @@ FACE_DETECTOR = None
 LP_DETECTOR = None
 
 
-def init_worker(fd, lp):
-    """Set global detectors for each worker.
+def init_worker(fd, lp, devices):
+    """Set global detectors and device for each worker.
 
     ``fd`` and ``lp`` can be either loaded models (when using ``fork``)
-    or file paths (when using ``spawn``).
+    or file paths (when using ``spawn``). ``devices`` is a list of GPU
+    indices used to assign one device per worker.
     """
     global FACE_DETECTOR, LP_DETECTOR
+
+    # assign GPU to this worker if available
+    if torch.cuda.is_available() and devices:
+        idx = (mp.current_process()._identity[0] - 1) % len(devices)
+        torch.cuda.set_device(devices[idx])
 
     if isinstance(fd, str) or fd is None:
         FACE_DETECTOR = (
@@ -43,7 +49,7 @@ def init_worker(fd, lp):
             else None
         )
     else:
-        FACE_DETECTOR = fd
+        FACE_DETECTOR = fd.to(get_device()) if fd is not None else None
 
     if isinstance(lp, str) or lp is None:
         LP_DETECTOR = (
@@ -52,7 +58,7 @@ def init_worker(fd, lp):
             else None
         )
     else:
-        LP_DETECTOR = lp
+        LP_DETECTOR = lp.to(get_device()) if lp is not None else None
 
 
 
@@ -206,24 +212,21 @@ def process_video_multiprocessing(
 
     face_detector = None
     lp_detector = None
-    init_args = (face_model_path, lp_model_path)
+    devices = list(range(torch.cuda.device_count())) if torch.cuda.is_available() else []
+    init_args = (face_model_path, lp_model_path, devices)
 
     if start_method == "fork":
         if face_model_path is not None:
-            face_detector = torch.jit.load(face_model_path, map_location="cpu").to(
-                get_device()
-            )
+            face_detector = torch.jit.load(face_model_path, map_location="cpu")
             face_detector.eval()
             face_detector.share_memory()
 
         if lp_model_path is not None:
-            lp_detector = torch.jit.load(lp_model_path, map_location="cpu").to(
-                get_device()
-            )
+            lp_detector = torch.jit.load(lp_model_path, map_location="cpu")
             lp_detector.eval()
             lp_detector.share_memory()
 
-        init_args = (face_detector, lp_detector)
+        init_args = (face_detector, lp_detector, devices)
 
 
     cap = cv2.VideoCapture(input_video_path)
